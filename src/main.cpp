@@ -6,7 +6,7 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-#define type 2 // 1 is receive, -1 is send, 0 is get mac address, 2 is blinker
+#define type 1 // 1 is receive, -1 is send, 0 is get mac address, 2 is blinker
 #define which 1
 
 #if which == 1
@@ -38,13 +38,60 @@ Servo s1, s2, s3;
 int posA = 135, posB = 135, posC = 135;
 bool lock = false;
 data mes;
+uint32_t lastTime;
+
+void mForward(int ang)
+{
+    if (posA != 135 || posB != 135 || posC != 135)
+        posA = 135, posB = 135, posC = 135, delay(200);
+
+    posA = 95, posB = ang, posC = 270;
+    delay(450);
+    posA = 0, posB = ang, posC = 135;
+    delay(350);
+    posA = 135, posB = 135, posC = 135;
+    delay(200);
+}
+
+void mBackward(int ang)
+{
+    if (posA != 135 || posB != 135 || posC != 135)
+        posA = 135, posB = 135, posC = 135, delay(200);
+
+    posA = 0, posB = ang, posC = 175;
+    delay(450);
+    posA = 135, posB = ang, posC = 270;
+    delay(350);
+    posA = 135, posB = 135, posC = 135;
+    delay(200);
+}
+
+void reset()
+{
+    posA = 135, posB = 135, posC = 135;
+    delay(2000); // force reset
+}
+
 void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len)
 {
     memcpy(&mes, incomingData, sizeof(mes));
-    posA = mes.a;
-    posB = mes.b;
-    posC = mes.c;
-    lock = mes.lock;
+
+    if (mes.a == 420)
+    {
+        if (mes.c == 1)
+            mForward(mes.b);
+        else if (mes.c == -1)
+            mBackward(mes.b);
+    }
+    else if (mes.a == -420)
+        reset();
+    else
+    {
+        posA = mes.a;
+        posB = mes.b;
+        posC = mes.c;
+        lock = mes.lock;
+    }
 }
 
 void setup()
@@ -92,7 +139,6 @@ void setup()
 
 void loop()
 {
-
     delay(10);
 }
 
@@ -102,7 +148,7 @@ void task1(void* pvParameters)
     while (true)
     {
         sA.write(posA);
-        delay(15);
+        delay(5);
     }
 }
 
@@ -112,7 +158,7 @@ void task2(void* pvParameters)
     while (true)
     {
         sB.write(posB);
-        delay(15);
+        delay(5);
     }
 }
 
@@ -122,11 +168,14 @@ void task3(void* pvParameters)
     while (true)
     {
         sC.write(posC);
-        delay(15);
+        delay(5);
     }
 }
 
 #elif type == -1
+
+#define BLINKER_BLE
+
 uint8_t broadcastAddress[2][6] = { { 0x68, 0xB6, 0xB3, 0x3F, 0x44, 0x44 }, { 0x68, 0xB6, 0xB3, 0x3E, 0x33, 0x20 } };
 data myData;
 
@@ -135,12 +184,103 @@ bool flipped = false;
 esp_now_peer_info_t peer1;
 esp_now_peer_info_t peer2;
 
-void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status)
-{}
+BlinkerSlider Slider1("SliderKey1");
+BlinkerSlider Slider2("SliderKey2");
+BlinkerSlider Slider3("SliderKey3");
+BlinkerSlider Slider4("which");
+BlinkerButton Button1("ForwardKey");
+BlinkerButton Button2("BackwardKey");
+BlinkerButton Button3("reset");
 
-void sendData()
+int num = 0;
+
+// special command sets, set on receiving end
+void mForward()
 {
+    myData = { 420, myData.b, 1 };
+    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
+    delay(10);
+}
+void mBackward()
+{
+    myData = { 420, myData.b, -1 };
+    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
+    delay(10);
+}
+void reset()
+{
+    myData = { -420, 0, 0 };
+    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
+    delay(10);
+}
+void button1_callback(const String& state) // forward
+{
+    if (state == BLINKER_CMD_BUTTON_TAP)
+    {
+        BLINKER_LOG("Forward button tap!");
+        mForward();
+        myData = { 135,135,135,false };
+        Slider1.print(myData.a);
+        Slider2.print(myData.b);
+        Slider3.print(myData.c);
+    }
+}
+void button2_callback(const String& state) // backward
+{
+    if (state == BLINKER_CMD_BUTTON_TAP)
+    {
+        BLINKER_LOG("Backward button tap!");
+        mBackward();
+        myData = { 135,135,135,false };
+        Slider1.print(myData.a);
+        Slider2.print(myData.b);
+        Slider3.print(myData.c);
+    }
+}
+void button3_callback(const String& state) // reset
+{
+    if (state == BLINKER_CMD_BUTTON_TAP)
+    {
+        BLINKER_LOG("Button tap!");
+        reset();
+        myData = { 135,135,135,false };
+        Slider1.print(myData.a);
+        Slider2.print(myData.b);
+        Slider3.print(myData.c);
+    }
+}
 
+// direct command sets, set on sender end
+void slider1_callback(int32_t value)
+{
+    myData.a = value;
+    esp_now_send(broadcastAddress[0], (uint8_t*)&myData, sizeof(myData));
+}
+void slider2_callback(int32_t value)
+{
+    myData.b = value;
+    esp_now_send(broadcastAddress[0], (uint8_t*)&myData, sizeof(myData));
+}
+void slider3_callback(int32_t value)
+{
+    myData.c = value;
+    esp_now_send(broadcastAddress[0], (uint8_t*)&myData, sizeof(myData));
+}
+void slider4_callback(int32_t value)
+{
+    num = value;
+}
+
+void dataRead(const String& data)
+{
+    BLINKER_LOG("Blinker readString: ", data);
+    uint32_t BlinkerTime = millis();
+    Blinker.println("error @ ", BlinkerTime);
+}
+
+void OnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status)
+{
+    // I do nothing
 }
 
 void setup()
@@ -175,95 +315,19 @@ void setup()
         Serial.println("Failed to add peer2");
         return;
     }
-}
 
-String rd1; // for incoming serial data
-String tmp1;
-int tmp2[3] = { -1000, -1000, -1000 };
+    BLINKER_DEBUG.stream(Serial);
+    Blinker.begin();
+    Blinker.attachData(dataRead);
 
-void mForward(int num, int ang)
-{
-    myData = { 95, ang, 270 };
-    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
-    delay(400);
-    myData = { 0, ang, 135 };
-    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
-    delay(250);
-    myData = { 135, 135, 135 };
-    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
-    delay(200);
-}
+    Slider1.attach(slider1_callback); Slider2.attach(slider2_callback); Slider3.attach(slider3_callback); Slider4.attach(slider4_callback);
 
-void mBackward(int num, int ang)
-{
-    myData = { 0, ang, 175 };
-    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
-    delay(400);
-    myData = { 135, ang, 270 };
-    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
-    delay(250);
-    myData = { 135, 135, 135 };
-    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
-    delay(200);
+    Button1.attach(button1_callback); Button2.attach(button2_callback); Button3.attach(button3_callback);
 }
 
 void loop()
 {
-    if (Serial.available() > 0)
-    {
-        rd1 = Serial.readString();
-        rd1.trim();
-
-        String x = rd1.substring(0, rd1.indexOf(' '));
-        int num = x.toInt();
-
-        rd1.remove(0, rd1.indexOf(' ') + 1);
-
-        // if forward command
-        if (rd1[0] == 'f' || rd1[0] == 'F')
-        {
-            Serial.print("to -> "), Serial.println(num);
-            Serial.println("forward");
-
-            rd1.remove(0, rd1.indexOf(' ') + 1);
-            int ang = rd1.toInt();
-            mForward(num, ang);
-        }
-        // if back command
-        else if (rd1[0] == 'b' || rd1[0] == 'B')
-        {
-            Serial.print("to -> "), Serial.println(num);
-            Serial.println("backward");
-
-            rd1.remove(0, rd1.indexOf(' ') + 1);
-            int ang = rd1.toInt();
-            mBackward(num, ang);
-        }
-        else
-        {
-            // if number command
-            for (int i = 0, cnt = 0; i < rd1.length(); i++)
-            {
-                if (rd1[i] != ' ')
-                    tmp1 += rd1[i];
-                else
-                    tmp2[cnt++] = tmp1.toInt(), Serial.println(tmp2[cnt - 1]), tmp1 = "";
-            }
-            tmp2[2] = tmp1.toInt();
-            tmp1 = "";
-            if (tmp2[0] != -1000 || tmp2[1] != -1000 || tmp2[2] != -1000)
-            {
-                myData.a = tmp2[0], myData.b = tmp2[1], myData.c = tmp2[2];
-                Serial.print("to -> "), Serial.println(num);
-                Serial.print("a: "), Serial.print(myData.a), Serial.print("; ");
-                Serial.print("b: "), Serial.print(myData.b), Serial.print("; ");
-                Serial.print("c: "), Serial.print(myData.c), Serial.print("; ");
-                esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
-            }
-            for (int i = 0; i < 3; i++) tmp2[i] = -1000;
-        }
-    }
-
+    Blinker.run();
     delay(10);
 }
 
@@ -291,18 +355,74 @@ void loop()
 cServo sA(15, 50, offset_a), sB(14, 50, offset_b), sC(13, 51, offset_c);
 cMotor mA(17, 18);
 
-void task1(void* pvParameters);
-void task2(void* pvParameters);
-void task3(void* pvParameters);
-
-Servo s1, s2, s3;
-
 int posA = 135, posB = 135, posC = 135;
 bool lock = false;
 
 BlinkerSlider Slider1("SliderKey1");
 BlinkerSlider Slider2("SliderKey2");
 BlinkerSlider Slider3("SliderKey3");
+BlinkerButton Button1("ForwardKey");
+BlinkerButton Button2("BackwardKey");
+
+void task1(void* pvParameters);
+void task2(void* pvParameters);
+void task3(void* pvParameters);
+
+uint32_t lastTime;
+
+bool pass = false;
+
+bool wait(uint32_t delayTime)
+{
+    lastTime = millis();
+    int begA = posA, begB = posB, begC = posC;
+    while (millis() - lastTime <= delayTime)
+    {
+        Blinker.run();
+        if (begA != posA || begB != posB || begC != posC)
+        {
+            Slider1.print(posA);
+            Slider2.print(posB);
+            Slider3.print(posC);
+            return false;
+        }
+    }
+    return true;
+}
+
+void move(int pa, int pb, int pc)
+{
+    bool x;
+    if (pass) return;
+    while (posA != pa || posB != pb || posC != pc)
+    {
+        posA += (pa == posA ? 0 : pa > posA ? 1 : -1), posB += (pb == posB ? 0 : pb > posB ? 1 : -1), posC += (pc == posC ? 0 : pc > posC ? 1 : -1);
+        Slider1.print(posA);
+        Slider2.print(posB);
+        Slider3.print(posC);
+        x = wait(2);
+        if (!x) { pass = true; return; }
+    }
+    Slider1.print(posA);
+    Slider2.print(posB);
+    Slider3.print(posC);
+}
+
+void mForward(int ang)
+{
+    move(95, ang, 270);
+    move(0, ang, 135);
+    move(135, 135, 135);
+    pass = false;
+}
+
+void mBackward(int ang)
+{
+    move(0, ang, 175);
+    move(135, ang, 270);
+    move(135, 135, 135);
+    pass = false;
+}
 
 void slider1_callback(int32_t value)
 {
@@ -317,6 +437,24 @@ void slider2_callback(int32_t value)
 void slider3_callback(int32_t value)
 {
     posC = value;
+}
+
+void button1_callback(const String& state)
+{
+    if (state == BLINKER_CMD_BUTTON_TAP)
+    {
+        BLINKER_LOG("Button tap!");
+        mForward(posB);
+    }
+}
+
+void button2_callback(const String& state)
+{
+    if (state == BLINKER_CMD_BUTTON_TAP)
+    {
+        BLINKER_LOG("Button tap!");
+        mBackward(posB);
+    }
 }
 
 void dataRead(const String& data)
@@ -365,6 +503,8 @@ void setup()
     Slider1.attach(slider1_callback);
     Slider2.attach(slider2_callback);
     Slider3.attach(slider3_callback);
+    Button1.attach(button1_callback);
+    Button2.attach(button2_callback);
 
     xTaskCreate(
         task1
@@ -410,7 +550,7 @@ void task1(void* pvParameters)
     while (true)
     {
         sA.write(posA);
-        delay(15);
+        delay(3);
     }
 }
 
@@ -420,7 +560,7 @@ void task2(void* pvParameters)
     while (true)
     {
         sB.write(posB);
-        delay(15);
+        delay(3);
     }
 }
 
@@ -430,7 +570,7 @@ void task3(void* pvParameters)
     while (true)
     {
         sC.write(posC);
-        delay(15);
+        delay(3);
     }
 }
 
