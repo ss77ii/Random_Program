@@ -42,8 +42,8 @@ uint32_t lastTime;
 
 void mForward(int ang)
 {
-    if (posA != 135 || posB != 135 || posC != 135)
-        posA = 135, posB = 135, posC = 135, delay(200);
+    if (posA != 135 || posC != 135)
+        posA = 135, posC = 135, delay(200);
 
     posA = 95, posB = ang, posC = 270;
     delay(450);
@@ -55,8 +55,8 @@ void mForward(int ang)
 
 void mBackward(int ang)
 {
-    if (posA != 135 || posB != 135 || posC != 135)
-        posA = 135, posB = 135, posC = 135, delay(200);
+    if (posA != 135 || posC != 135)
+        posA = 135, posC = 135, delay(200);
 
     posA = 0, posB = ang, posC = 175;
     delay(450);
