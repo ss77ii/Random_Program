@@ -6,8 +6,8 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-#define type 1 // 1 is receive, -1 is send, 0 is get mac address, 2 is blinker
-#define which 1
+#define type -1 // 1 is receive, -1 is send, 0 is get mac address, 2 is blinker
+#define which 2
 
 #if which == 1
 const int offset_a = 6, offset_b = 6, offset_c = 0;
@@ -72,6 +72,7 @@ void reset()
     delay(2000); // force reset
 }
 
+bool change = false;
 void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len)
 {
     memcpy(&mes, incomingData, sizeof(mes));
@@ -90,6 +91,7 @@ void OnDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len)
         posA = mes.a;
         posB = mes.b;
         posC = mes.c;
+        change = (lock != mes.lock);
         lock = mes.lock;
     }
 }
@@ -139,6 +141,13 @@ void setup()
 
 void loop()
 {
+    if (change)
+    {
+        mA.run(-100);
+        delay(50);
+        change = false;
+        mA.run(0);
+    }
     delay(10);
 }
 
@@ -177,7 +186,7 @@ void task3(void* pvParameters)
 #define BLINKER_BLE
 
 uint8_t broadcastAddress[2][6] = { { 0x68, 0xB6, 0xB3, 0x3F, 0x44, 0x44 }, { 0x68, 0xB6, 0xB3, 0x3E, 0x33, 0x20 } };
-data myData;
+data robot[2] = { {135, 135, 135, false}, {135, 135, 135, false} };
 
 bool flipped = false;
 
@@ -191,26 +200,27 @@ BlinkerSlider Slider4("which");
 BlinkerButton Button1("ForwardKey");
 BlinkerButton Button2("BackwardKey");
 BlinkerButton Button3("reset");
+BlinkerButton Button4("lock");
 
 int num = 0;
 
 // special command sets, set on receiving end
 void mForward()
 {
-    myData = { 420, myData.b, 1 };
-    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
+    robot[num] = { 420, robot[num].b, 1, robot[num].lock };
+    esp_now_send(broadcastAddress[num], (uint8_t*)&robot[num], sizeof(robot[num]));
     delay(10);
 }
 void mBackward()
 {
-    myData = { 420, myData.b, -1 };
-    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
+    robot[num] = { 420, robot[num].b, -1, robot[num].lock };
+    esp_now_send(broadcastAddress[num], (uint8_t*)&robot[num], sizeof(robot[num]));
     delay(10);
 }
 void reset()
 {
-    myData = { -420, 0, 0 };
-    esp_now_send(broadcastAddress[num], (uint8_t*)&myData, sizeof(myData));
+    robot[num] = { -420, 0, 0, robot[num].lock };
+    esp_now_send(broadcastAddress[num], (uint8_t*)&robot[num], sizeof(robot[num]));
     delay(10);
 }
 void button1_callback(const String& state) // forward
@@ -219,10 +229,10 @@ void button1_callback(const String& state) // forward
     {
         BLINKER_LOG("Forward button tap!");
         mForward();
-        myData = { 135,135,135,false };
-        Slider1.print(myData.a);
-        Slider2.print(myData.b);
-        Slider3.print(myData.c);
+        robot[num] = { 135,135,135,robot[num].lock };
+        Slider1.print(robot[num].a);
+        Slider2.print(robot[num].b);
+        Slider3.print(robot[num].c);
     }
 }
 void button2_callback(const String& state) // backward
@@ -231,10 +241,10 @@ void button2_callback(const String& state) // backward
     {
         BLINKER_LOG("Backward button tap!");
         mBackward();
-        myData = { 135,135,135,false };
-        Slider1.print(myData.a);
-        Slider2.print(myData.b);
-        Slider3.print(myData.c);
+        robot[num] = { 135,135,135,robot[num].lock };
+        Slider1.print(robot[num].a);
+        Slider2.print(robot[num].b);
+        Slider3.print(robot[num].c);
     }
 }
 void button3_callback(const String& state) // reset
@@ -243,31 +253,47 @@ void button3_callback(const String& state) // reset
     {
         BLINKER_LOG("Button tap!");
         reset();
-        myData = { 135,135,135,false };
-        Slider1.print(myData.a);
-        Slider2.print(myData.b);
-        Slider3.print(myData.c);
+        robot[num] = { 135,135,135,robot[num].lock };
+        Slider1.print(robot[num].a);
+        Slider2.print(robot[num].b);
+        Slider3.print(robot[num].c);
+    }
+}
+
+void button4_callback(const String& state)
+{
+    if (state == BLINKER_CMD_BUTTON_TAP)
+    {
+        robot[num].lock = !robot[num].lock;
+        Serial.println(robot[num].lock);
+        esp_now_send(broadcastAddress[num], (uint8_t*)&robot[num], sizeof(robot[num]));
     }
 }
 
 // direct command sets, set on sender end
 void slider1_callback(int32_t value)
 {
-    myData.a = value;
-    esp_now_send(broadcastAddress[0], (uint8_t*)&myData, sizeof(myData));
+    robot[num].a = value;
+    esp_now_send(broadcastAddress[num], (uint8_t*)&robot[num], sizeof(robot[num]));
 }
 void slider2_callback(int32_t value)
 {
-    myData.b = value;
-    esp_now_send(broadcastAddress[0], (uint8_t*)&myData, sizeof(myData));
+    robot[num].b = value;
+    esp_now_send(broadcastAddress[num], (uint8_t*)&robot[num], sizeof(robot[num]));
 }
 void slider3_callback(int32_t value)
 {
-    myData.c = value;
-    esp_now_send(broadcastAddress[0], (uint8_t*)&myData, sizeof(myData));
+    robot[num].c = value;
+    esp_now_send(broadcastAddress[num], (uint8_t*)&robot[num], sizeof(robot[num]));
 }
 void slider4_callback(int32_t value)
 {
+    if (num != value)
+    {
+        Slider1.print(robot[value].a);
+        Slider2.print(robot[value].b);
+        Slider3.print(robot[value].c);
+    }
     num = value;
 }
 
@@ -323,6 +349,7 @@ void setup()
     Slider1.attach(slider1_callback); Slider2.attach(slider2_callback); Slider3.attach(slider3_callback); Slider4.attach(slider4_callback);
 
     Button1.attach(button1_callback); Button2.attach(button2_callback); Button3.attach(button3_callback);
+    Button4.attach(button4_callback);
 }
 
 void loop()
